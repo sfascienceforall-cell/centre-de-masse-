@@ -1,0 +1,162 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#fff;font-family:system-ui,-apple-system,sans-serif;}
+canvas{display:block;border-radius:12px;border:1.5px solid #e8e8e8;touch-action:none;cursor:grab;}
+.fml{font-size:13px;padding:10px 16px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#2c2c2a;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.8;}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap;}
+.pill{font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:6px 14px;white-space:nowrap;}
+.btn{padding:7px 15px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid #d0d0d0;background:#fff;color:#2c2c2a;}
+.btn.on{border-color:#185fa5;background:#e6f1fb;color:#185fa5;}
+.btn.mode.on{border-color:#0F6E56;background:#e7f6ef;color:#0F6E56;}
+.val{min-width:52px;text-align:center;font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:5px 10px;}
+.info{font-size:12px;padding:8px 14px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#555;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.7;}
+input[type=range]{flex:1;min-width:90px;}
+</style>
+
+<canvas id="cv" style="width:100%;height:60vh;min-height:380px;"></canvas>
+<div class="fml" id="fml"></div>
+
+<div class="row">
+  <button class="btn mode on" id="m0" onclick="setM(0)">2 particules</button>
+  <button class="btn mode" id="m1" onclick="setM(1)">N particules</button>
+  <button class="btn mode" id="m2" onclick="setM(2)">Cube</button>
+  <button class="btn mode" id="m3" onclick="setM(3)">Tore (donut)</button>
+</div>
+<div class="row" id="rowN" style="display:none;">
+  <span class="pill" style="color:#185fa5;border-color:#b5d4f4;">nombre N</span>
+  <input type="range" id="N" min="2" max="120" value="6" step="1" style="accent-color:#378ADD;max-width:220px;">
+  <span class="val" id="Nv" style="color:#185fa5;border-color:#b5d4f4;">6</span>
+</div>
+<div class="row" id="rowD" style="display:none;">
+  <span class="pill" style="color:#0F6E56;border-color:#79c6a6;">densité : discret → continu</span>
+  <input type="range" id="D" min="1" max="10" value="3" step="1" style="accent-color:#1D9E75;max-width:240px;">
+  <span class="val" id="Dv" style="color:#0F6E56;border-color:#79c6a6;">3</span>
+</div>
+<div class="row" id="rowM" style="display:none;">
+  <span class="pill" style="color:#a32d2d;border-color:#f09595;">m₁</span>
+  <input type="range" id="m1s" min="1" max="8" value="2" step="0.5" style="accent-color:#E24B4A;max-width:120px;">
+  <span class="val" id="m1v" style="color:#a32d2d;border-color:#f09595;">2</span>
+  <span class="pill" style="color:#185fa5;border-color:#b5d4f4;">m₂</span>
+  <input type="range" id="m2s" min="1" max="8" value="5" step="0.5" style="accent-color:#378ADD;max-width:120px;">
+  <span class="val" id="m2v" style="color:#185fa5;border-color:#b5d4f4;">5</span>
+</div>
+<div class="row">
+  <button class="btn" onclick="zoom*=1.18">Zoom +</button>
+  <button class="btn" onclick="zoom/=1.18">Zoom −</button>
+  <button class="btn" id="bDrag" onclick="panMode=!panMode;this.className=panMode?'btn on':'btn';this.textContent=panMode?'Déplacer':'Orbite';">Orbite</button>
+  <span class="pill" style="color:#0F6E56;border-color:#79c6a6;">🖱 glisser = tourner · molette = zoom</span>
+</div>
+<div class="info" id="info"></div>
+
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const RED='#E24B4A',BLUE='#378ADD',VIOLET='#7F77DD',GREEN='#1D9E75',INK='#3d3d3a',GREY='#9aa0a6',AX='#d3d7db';
+let W=0,H=0,dpr=1,mode=0,az=-0.6,el=0.5,zoom=1,panx=0,pany=0,panMode=false;
+let N=6,m1=2,m2=5,density=3;
+const Ld=(function(){const v={x:0.5,y:0.8,z:0.6},l=Math.hypot(v.x,v.y,v.z);return {x:v.x/l,y:v.y/l,z:v.z/l};})();
+function syncSize(){const r=cv.getBoundingClientRect();dpr=window.devicePixelRatio||1;
+  const nW=Math.round(r.width)||700,nH=Math.round(r.height)||380;
+  if(nW!==W||nH!==H){W=nW;H=nH;cv.width=W*dpr;cv.height=H*dpr;}ctx.setTransform(dpr,0,0,dpr,0,0);}
+let cx0,cy0,SCALE;
+function P(p){const ca=Math.cos(az),sa=Math.sin(az),X=p.x*ca-p.y*sa,Y=p.x*sa+p.y*ca,ce=Math.cos(el),se=Math.sin(el);
+  return {x:cx0+panx+X*SCALE,y:cy0+pany-(p.z*ce-Y*se)*SCALE,d:Y};}
+function seg(a,b,col,w,dash){const A=P(a),B=P(b);ctx.strokeStyle=col;ctx.lineWidth=w||1.2;if(dash)ctx.setLineDash(dash);
+  ctx.beginPath();ctx.moveTo(A.x,A.y);ctx.lineTo(B.x,B.y);ctx.stroke();ctx.setLineDash([]);}
+function sphere(p,rad,col){const s=P(p);const gr=ctx.createRadialGradient(s.x-rad*0.35,s.y-rad*0.35,rad*0.2,s.x,s.y,rad);
+  gr.addColorStop(0,'#fff');gr.addColorStop(0.25,col);gr.addColorStop(1,shade(col));
+  ctx.fillStyle=gr;ctx.beginPath();ctx.arc(s.x,s.y,rad,0,7);ctx.fill();}
+function dot(p,rad,col){const s=P(p);ctx.fillStyle=col;ctx.beginPath();ctx.arc(s.x,s.y,rad,0,7);ctx.fill();}
+function shade(c){const m={'#378ADD':'#215d97','#E24B4A':'#9c2f2e','#1D9E75':'#136c50','#9aa0a6':'#6b7177'};return m[c]||'#555';}
+
+function mkCloud(n){let s=12345,r=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};
+  const a=[];for(let i=0;i<120;i++)a.push({x:(r()*2-1)*1.5,y:(r()*2-1)*1.5,z:(r()*2-1)*1.5,m:1});return a.slice(0,n);}
+let cloud=mkCloud(120);
+function cubeGrid(res){const a=[];for(let i=0;i<res;i++)for(let j=0;j<res;j++)for(let k=0;k<res;k++){
+  a.push({x:-1.2+2.4*i/(res-1),y:-1.2+2.4*j/(res-1),z:-1.2+2.4*k/(res-1),m:1});}return a;}
+function torusPts(nu,nv){const a=[],R=1.35,rr=0.5;for(let i=0;i<nu;i++)for(let j=0;j<nv;j++){
+  const u=i/nu*2*Math.PI,v=j/nv*2*Math.PI;a.push({x:(R+rr*Math.cos(v))*Math.cos(u),y:(R+rr*Math.cos(v))*Math.sin(u),z:rr*Math.sin(v),m:1});}return a;}
+function CM(list){let M=0,x=0,y=0,z=0;for(const p of list){M+=p.m;x+=p.m*p.x;y+=p.m*p.y;z+=p.m*p.z;}return {x:x/M,y:y/M,z:z/M,M:M};}
+
+// dessin de faces/quads translucides, triées en profondeur, avec éclairage fixe
+function drawSolid(faces,baseCol,alpha){
+  faces.forEach(f=>{const c=P(f.c);f._d=c.d;});
+  faces.sort((a,b)=>b._d-a._d);
+  for(const f of faces){const dt=Math.max(0,f.n.x*Ld.x+f.n.y*Ld.y+f.n.z*Ld.z);const lum=0.5+0.5*dt;
+    ctx.beginPath();for(let i=0;i<f.pts.length;i++){const s=P(f.pts[i]);i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y);}ctx.closePath();
+    ctx.fillStyle='rgba('+Math.round(baseCol[0]*lum)+','+Math.round(baseCol[1]*lum)+','+Math.round(baseCol[2]*lum)+','+alpha+')';ctx.fill();
+    ctx.strokeStyle='rgba(60,70,90,'+(alpha*0.5)+')';ctx.lineWidth=0.6;ctx.stroke();}
+}
+function cubeFaces(c){const V=[[-c,-c,-c],[c,-c,-c],[c,c,-c],[-c,c,-c],[-c,-c,c],[c,-c,c],[c,c,c],[-c,c,c]];
+  const F=[[[0,3,2,1],[0,0,-1]],[[4,5,6,7],[0,0,1]],[[0,1,5,4],[0,-1,0]],[[3,7,6,2],[0,1,0]],[[0,4,7,3],[-1,0,0]],[[1,2,6,5],[1,0,0]]];
+  return F.map(f=>{const pts=f[0].map(i=>({x:V[i][0],y:V[i][1],z:V[i][2]}));
+    const c0={x:0,y:0,z:0};pts.forEach(p=>{c0.x+=p.x/4;c0.y+=p.y/4;c0.z+=p.z/4;});
+    return {pts:pts,c:c0,n:{x:f[1][0],y:f[1][1],z:f[1][2]}};});}
+function torusFaces(nu,nv){const R=1.35,rr=0.5,f=[];
+  const pt=(i,j)=>{const u=i/nu*2*Math.PI,v=j/nv*2*Math.PI;return {x:(R+rr*Math.cos(v))*Math.cos(u),y:(R+rr*Math.cos(v))*Math.sin(u),z:rr*Math.sin(v),u:u,v:v};};
+  for(let i=0;i<nu;i++)for(let j=0;j<nv;j++){const a=pt(i,j),b=pt((i+1)%nu,j),c=pt((i+1)%nu,(j+1)%nv),d=pt(i,(j+1)%nv);
+    const cen={x:(a.x+b.x+c.x+d.x)/4,y:(a.y+b.y+c.y+d.y)/4,z:(a.z+b.z+c.z+d.z)/4};
+    const tc={x:R*Math.cos(a.u),y:R*Math.sin(a.u),z:0};const n0={x:cen.x-tc.x,y:cen.y-tc.y,z:cen.z-tc.z};const l=Math.hypot(n0.x,n0.y,n0.z)||1;
+    f.push({pts:[a,b,c,d],c:cen,n:{x:n0.x/l,y:n0.y/l,z:n0.z/l}});}
+  return f;}
+
+function setM(n){mode=n;['m0','m1','m2','m3'].forEach((id,i)=>document.getElementById(id).className='btn mode'+(i===n?' on':''));
+  document.getElementById('rowN').style.display=n===1?'flex':'none';
+  document.getElementById('rowM').style.display=n===0?'flex':'none';
+  document.getElementById('rowD').style.display=(n===2||n===3)?'flex':'none';
+  document.getElementById('fml').innerHTML='<b style="color:#7F77DD">R̄_CM = (Σ mᵢ·r̄ᵢ) / (Σ mᵢ)</b>'+((n>=2)?' &nbsp;→&nbsp; <b style="color:#1D9E75">(1/M)·∫ r̄ dm</b>':'');}
+document.getElementById('N').addEventListener('input',e=>{N=+e.target.value;document.getElementById('Nv').textContent=N;});
+document.getElementById('D').addEventListener('input',e=>{density=+e.target.value;document.getElementById('Dv').textContent=density;});
+document.getElementById('m1s').addEventListener('input',e=>{m1=+e.target.value;document.getElementById('m1v').textContent=m1;});
+document.getElementById('m2s').addEventListener('input',e=>{m2=+e.target.value;document.getElementById('m2v').textContent=m2;});
+
+function drawScene(){syncSize();ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+  cx0=W*0.5;cy0=H*0.54;SCALE=Math.min(W,H)*0.15*zoom;
+  const g=2;for(let i=-g;i<=g;i++){const c=i===0?'#c7cbcf':'#eef0f2';seg({x:i,y:-g,z:0},{x:i,y:g,z:0},c,1);seg({x:-g,y:i,z:0},{x:g,y:i,z:0},c,1);}
+  seg({x:0,y:0,z:0},{x:g+0.3,y:0,z:0},AX,1.2);seg({x:0,y:0,z:0},{x:0,y:g+0.3,z:0},AX,1.2);seg({x:0,y:0,z:0},{x:0,y:0,z:g+0.1},AX,1.2);
+
+  let pts,cm,extra='',solidA=0,solidFaces=null,solidCol=[143,168,200],ptR=5,ptCol=BLUE;
+  if(mode===0){pts=[{x:-1.5,y:-0.7,z:0.4,m:m1},{x:1.6,y:0.8,z:-0.3,m:m2}];cm=CM(pts);
+    seg(pts[0],pts[1],'#c9ccd1',1.5,[5,4]);
+    extra='CM sur le segment, plus près de la grosse masse. m₁='+m1+', m₂='+m2+' ⇒ le CM divise le segment dans le rapport inverse des masses.';}
+  else if(mode===1){pts=cloud.slice(0,N);cm=CM(pts);ptR=5;
+    extra='Somme discrète : R̄_CM = (Σ mᵢr̄ᵢ)/(Σmᵢ) sur '+N+' points. Augmente N : le nuage se densifie.';}
+  else if(mode===2){const res=density+1;pts=cubeGrid(res);cm={x:0,y:0,z:0,M:pts.length};ptCol=BLUE;ptR=Math.max(1.8,6.2-density*0.5);
+    const c=1.2,V=[[-c,-c,-c],[c,-c,-c],[c,c,-c],[-c,c,-c],[-c,-c,c],[c,-c,c],[c,c,c],[-c,c,c]];
+    const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+    for(const e of E)seg({x:V[e[0]][0],y:V[e[0]][1],z:V[e[0]][2]},{x:V[e[1]][0],y:V[e[1]][1],z:V[e[1]][2]},'#b9c8dd',1.4);
+    solidA=Math.max(0,(density-2)/7)*0.5;if(solidA>0.02){solidFaces=cubeFaces(1.2);solidCol=[150,175,210];}
+    extra='Densité '+density+'/10 — '+(solidA<0.12?'forme DISCRÈTE : R̄_CM = (Σ mᵢr̄ᵢ)/Σmᵢ sur '+pts.length+' points.':'la somme devient CONTINUE : (1/M)∫r̄ dm, le solide se remplit.')+' Par symétrie, CM au centre du cube.';}
+  else {const nu=density*3+4,nv=density+4;pts=torusPts(nu,nv);cm={x:0,y:0,z:0,M:pts.length};ptCol=GREY;ptR=Math.max(1.6,5.2-density*0.35);
+    solidA=Math.max(0,(density-2)/7)*0.55;if(solidA>0.02){solidFaces=torusFaces(nu,nv);solidCol=[150,156,164];}
+    extra='Densité '+density+'/10 — '+(solidA<0.12?'points discrets échantillonnant le tore ('+pts.length+' points).':'tend vers le tore CONTINU (surface pleine).')+' CM au centre du trou : dans le VIDE, hors matière.';}
+
+  // points (triés) — sphères si peu nombreux, sinon disques plats
+  const draw=pts.map(p=>({p:p,d:P(p).d}));draw.sort((a,b)=>b.d-a.d);
+  for(const it of draw){const p=it.p;
+    if(mode===0){sphere(p,6+p.m*1.6,p.m===m1?RED:BLUE);}
+    else if(pts.length<=60){sphere(p,ptR,ptCol);}
+    else{dot(p,ptR,ptCol);}}
+  // solide continu par-dessus
+  if(solidFaces)drawSolid(solidFaces,solidCol,solidA);
+
+  // marqueur CM
+  const c=P(cm);
+  ctx.fillStyle='rgba(127,119,221,0.18)';ctx.beginPath();ctx.arc(c.x,c.y,15,0,7);ctx.fill();
+  sphere(cm,8,VIOLET);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(c.x,c.y,8,0,7);ctx.stroke();
+  ctx.strokeStyle=VIOLET;ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(c.x-13,c.y);ctx.lineTo(c.x+13,c.y);ctx.moveTo(c.x,c.y-13);ctx.lineTo(c.x,c.y+13);ctx.stroke();
+  ctx.fillStyle=VIOLET;ctx.font='700 13px system-ui';ctx.textAlign='left';ctx.fillText('CM',c.x+14,c.y-10);
+
+  document.getElementById('info').innerHTML='<b style="color:'+VIOLET+'">CM = ('+cm.x.toFixed(2)+', '+cm.y.toFixed(2)+', '+cm.z.toFixed(2)+')</b> — '+extra;
+  requestAnimationFrame(drawScene);}
+
+function gp(e){const r=cv.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return{x:t.clientX-r.left,y:t.clientY-r.top};}
+let drag=null;
+cv.addEventListener('pointerdown',e=>{drag=gp(e);cv.style.cursor='grabbing';});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const p=gp(e);
+  if(panMode){panx+=p.x-drag.x;pany+=p.y-drag.y;}
+  else{az+=(p.x-drag.x)*0.01;el=Math.max(0.05,Math.min(1.45,el+(p.y-drag.y)*0.01));}drag=p;});
+window.addEventListener('pointerup',()=>{drag=null;cv.style.cursor='grab';});
+cv.addEventListener('wheel',e=>{e.preventDefault();zoom*=e.deltaY<0?1.08:1/1.08;zoom=Math.max(0.3,Math.min(4,zoom));},{passive:false});
+setM(0);drawScene();
+</script>
